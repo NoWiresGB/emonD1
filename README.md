@@ -7,3 +7,6 @@ https://wiki.openenergymonitor.org/index.php/EmonTx_Arduino_Shield
 
 ## RFM69Pi
 https://wiki.openenergymonitor.org/index.php/RFM69Pi_V3
+
+## Required libraries
+WiFiManager for automatic WiFi configuration
