@@ -8,10 +8,10 @@
 #include <PubSubClient.h>
 
 // hardcode it for now
-const char* mqtt_server = "192.168.0.254";
+const char* mqttServer = "192.168.0.254";
 
 // HTTP server
-WiFiServer server(80);
+WiFiServer httpServer(80);
 
 // MQTT client
 WiFiClient espClient;
@@ -41,14 +41,14 @@ void setup() {
   Serial.println("mDNS responder started - hostname emonD1.local");
 
   // Start TCP (HTTP) server
-  server.begin();
-  Serial.println("TCP server started");
+  httpServer.begin();
+  Serial.println("HTTP server started");
 
   // Add service to MDNS-SD
   MDNS.addService("http", "tcp", 80);
 
   // Set up MQTT connection
-  mqttClient.setServer(mqtt_server, 1883);
+  mqttClient.setServer(mqttServer, 1883);
 }
 
 void mqttReconnect() {
@@ -56,7 +56,7 @@ void mqttReconnect() {
   while (!mqttClient.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Create a random client ID
-    String clientId = "ESP8266Client-";
+    String clientId = "emonD1-";
     clientId += String(random(0xffff), HEX);
     // Attempt to connect
     if (mqttClient.connect(clientId.c_str())) {
