@@ -6,6 +6,7 @@
 #include <ESP8266WebServer.h>
 #include <WiFiManager.h>
 #include <PubSubClient.h>
+#include <SoftwareSerial.h>
 
 // hardcode it for now
 const char* mqttServer = "192.168.0.254";
@@ -16,6 +17,22 @@ ESP8266WebServer httpServer(80);
 // MQTT client
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
+
+// RFM69Pi GPIO_1 pinout (top view, antenna top left corner)
+//
+//            +----+
+//  D1/TX --9-|    |-10- GND
+//  D0/RX --7-|    |-8-- RESET
+//  GND   --5-|    |-6--
+//        --3-|    |-4--
+//        --1-|    |-2-- +3V
+//            +----+
+
+// Serial to communicate with RFM69Pi
+#define D1RX_PIN D5
+#define D1TX_PIN D6
+SoftwareSerial rfm96Serial(D1RX_PIN, D1TX_PIN);
+String rxBuffer = "";
 
 // handle request for web root
 void handleRoot() {
@@ -72,6 +89,13 @@ void setup() {
 
   // Set up MQTT connection
   mqttClient.setServer(mqttServer, 1883);
+
+  // init serial towards RFM69Pi
+  rfm96Serial.begin(38400);
+
+  // push the correct group to the FRM69Pi
+  // (by default it comes up as group 0)
+  rfm96Serial.print("210g");
 }
 
 void mqttReconnect() {
@@ -95,6 +119,86 @@ void mqttReconnect() {
   }
 }
 
+void processPacket(String packet) {
+  // packet format
+  // OK 6 167 2 82 92 (-38)
+  // <OK> <node id> <power1 LSB> <power1 MSB> <Vrms LSB> <Vrms MSB> (<RSSI>)
+
+  // dump received packet
+  Serial.print("processing received packet: '");
+  Serial.print(packet);
+  Serial.println("'");
+
+  // find node ID
+  int iPos1 = packet.indexOf(" ");
+  int iPos2 = packet.indexOf(" ", iPos1 + 1);
+  String sData = packet.substring(iPos1 + 1, iPos2);
+  int iNodeId = sData.toInt();
+
+  // power1 LSB
+  iPos1 = iPos2;
+  iPos2 = packet.indexOf(" ", iPos1 + 1);
+  String sLSB = packet.substring(iPos1 + 1, iPos2);
+
+  // power1 MSB
+  iPos1 = iPos2;
+  iPos2 = packet.indexOf(" ", iPos1 + 1);
+  String sMSB = packet.substring(iPos1 + 1, iPos2);
+
+  // actual power
+  int iPower = sMSB.toInt() * 256 + sLSB.toInt();
+
+  // Vrms LSB
+  iPos1 = iPos2;
+  iPos2 = packet.indexOf(" ", iPos1 + 1);
+  sLSB = packet.substring(iPos1 + 1, iPos2);
+
+  // Vrms MSB
+  iPos1 = iPos2;
+  iPos2 = packet.indexOf(" ", iPos1 + 1);
+  sMSB = packet.substring(iPos1 + 1, iPos2);
+
+  // calculate Vrms
+  float fVrms = (sMSB.toInt() * 256 + sLSB.toInt()) / 100.0;
+
+  // get RSSI
+  iPos1 = packet.indexOf("(");
+  iPos2 = packet.indexOf(")", iPos1 + 1);
+  sData = packet.substring(iPos1 + 1, iPos2);
+  int iRSSI = sData.toInt();
+
+  // publish data on MQTT
+  sData = String(iPower);
+  mqttClient.publish("emon/emontxshield/power1", sData.c_str());
+  Serial.print("Publishing: emon/emontxshield/power1 ");
+  Serial.println(sData);
+
+  sData = String(fVrms);
+  mqttClient.publish("emon/emontxshield/vrms", sData.c_str());
+  Serial.print("Publishing: emon/emontxshield/vrms ");
+  Serial.println(sData);
+
+  sData = String(iRSSI);
+  mqttClient.publish("emon/emontxshield/rssi", sData.c_str());
+  Serial.print("Publishing: emon/emontxshield/rssi ");
+  Serial.println(sData);
+
+  //emonhub/rx/6/values 679,236.34,-38
+  String sSubject = "emonhub/rx/";
+  sSubject += String(iNodeId);
+  sSubject += "/values";
+  sData = String(iPower);
+  sData += ",";
+  sData += String(fVrms);
+  sData += ",";
+  sData += String(iRSSI);
+  mqttClient.publish(sSubject.c_str(), sData.c_str());
+  Serial.print("Publishing: ");
+  Serial.print(sSubject);
+  Serial.print(" ");
+  Serial.println(sData);
+}
+
 void loop() {
   // run mDNS update
   MDNS.update();
@@ -105,7 +209,37 @@ void loop() {
   }
   mqttClient.loop();
 
-  // TODO: process serial stuff from RFM69Pi
+  // Process serial stuff from RFM69Pi
+  if (rfm96Serial.available() || rxBuffer.length() > 0) {
+    rxBuffer += rfm96Serial.readString();
+
+    // check if we've read a full line
+    int nlPos = rxBuffer.indexOf("\r\n");
+    if (nlPos != -1) {
+      // got a newline in our buffer
+      String packet = rxBuffer.substring(0, nlPos);
+
+      // check what we need to do
+      if (packet.startsWith(">") || packet.startsWith("->")) {
+        // this is an acknowledgement - no need to process it
+        Serial.print("command acknowledgement: ");
+        Serial.println(packet);
+      } else if (packet.startsWith("OK")) {
+        // this is an actual packet
+        processPacket(packet);
+      } else {
+        Serial.print("Ignoring invalid packet: ");
+        Serial.println(packet);
+      }
+
+      // remove packet from buffer (but check if it's the only thing in there)
+      if ((int)(rxBuffer.length()) == nlPos + 2) {
+        rxBuffer = "";
+      } else {
+        rxBuffer = rxBuffer.substring(nlPos + 2);
+      }
+    }
+  }
 
   // process web stuff
   httpServer.handleClient();
