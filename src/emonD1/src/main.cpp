@@ -8,15 +8,18 @@
 #include <PubSubClient.h>
 #include <SoftwareSerial.h>
 
-// hardcode it for now
-const char* mqttServer = "192.168.0.254";
-
 // HTTP server
 ESP8266WebServer httpServer(80);
 
 // MQTT client
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
+
+// MQTT related config
+// hardcode it for now
+const char* mqttServer = "192.168.0.254";
+const char* mqttMeasureTopic = "home/pwrsens1/";
+const char* mqttStatusTopic = "home/emonD1/";
 
 // RFM69Pi GPIO_1 pinout (top view, antenna top left corner)
 //
@@ -34,6 +37,11 @@ PubSubClient mqttClient(espClient);
 SoftwareSerial rfm96Serial(D1RX_PIN, D1TX_PIN);
 String rxBuffer = "";
 
+// Store measurements globally, so we can display it on the web-gui
+int iPower = 0;
+float fVrms = 0;
+int iRSSI = 0;
+
 // handle request for web root
 void handleRoot() {
 
@@ -47,6 +55,24 @@ void handleRoot() {
   s += "<h1 style=\"color: #82afcc\">emonESP</h1>";
   s += "<h3>RFM69Pi to MQTT bridge</h3>";
   s += "</center>";
+
+  s += "<p>Last measurements:</p>";
+  s += "<ul>";
+
+  s += "<li>Power: ";
+  s += String(iPower);
+  s += " W</li>";
+
+  s += "<li>Vrms: ";
+  s += String(fVrms);
+  s += " V</li>";
+
+  s += "<li>RSSI: ";
+  s += String(iRSSI);
+  s += " dB</li>";
+
+  s += "</ul>";
+
   s += "</body>";
   s += "</html>";
 
@@ -108,7 +134,9 @@ void mqttReconnect() {
     // Attempt to connect
     if (mqttClient.connect(clientId.c_str())) {
       Serial.println("MQTT connected");
-      mqttClient.publish("/home/emonD1/status", "connected");
+      String sStatus = String(mqttStatusTopic);
+      sStatus += "status";
+      mqttClient.publish(sStatus.c_str(), "connected");
     } else {
       Serial.print("failed, rc=");
       Serial.print(mqttClient.state());
@@ -146,7 +174,7 @@ void processPacket(String packet) {
   String sMSB = packet.substring(iPos1 + 1, iPos2);
 
   // actual power
-  int iPower = sMSB.toInt() * 256 + sLSB.toInt();
+  iPower = sMSB.toInt() * 256 + sLSB.toInt();
 
   // Vrms LSB
   iPos1 = iPos2;
@@ -159,32 +187,46 @@ void processPacket(String packet) {
   sMSB = packet.substring(iPos1 + 1, iPos2);
 
   // calculate Vrms
-  float fVrms = (sMSB.toInt() * 256 + sLSB.toInt()) / 100.0;
+  fVrms = (sMSB.toInt() * 256 + sLSB.toInt()) / 100.0;
 
   // get RSSI
   iPos1 = packet.indexOf("(");
   iPos2 = packet.indexOf(")", iPos1 + 1);
   sData = packet.substring(iPos1 + 1, iPos2);
-  int iRSSI = sData.toInt();
+  iRSSI = sData.toInt();
 
   // publish data on MQTT
   sData = String(iPower);
-  mqttClient.publish("emon/emontxshield/power1", sData.c_str());
-  Serial.print("Publishing: emon/emontxshield/power1 ");
+  String sSubject = String(mqttMeasureTopic);
+  sSubject += "power1";
+  mqttClient.publish(sSubject.c_str(), sData.c_str());
+  Serial.print("Publishing: ");
+  Serial.print(sSubject);
+  Serial.print(" ");
   Serial.println(sData);
 
   sData = String(fVrms);
-  mqttClient.publish("emon/emontxshield/vrms", sData.c_str());
-  Serial.print("Publishing: emon/emontxshield/vrms ");
+  sSubject = String(mqttMeasureTopic);
+  sSubject += "vrms";
+  mqttClient.publish(sSubject.c_str(), sData.c_str());
+  Serial.print("Publishing: ");
+  Serial.print(sSubject);
+  Serial.print(" ");
   Serial.println(sData);
 
   sData = String(iRSSI);
-  mqttClient.publish("emon/emontxshield/rssi", sData.c_str());
-  Serial.print("Publishing: emon/emontxshield/rssi ");
+  sSubject = String(mqttMeasureTopic);
+  sSubject += "rssi";
+  mqttClient.publish(sSubject.c_str(), sData.c_str());
+  Serial.print("Publishing: ");
+  Serial.print(sSubject);
+  Serial.print(" ");
   Serial.println(sData);
 
-  //emonhub/rx/6/values 679,236.34,-38
-  String sSubject = "emonhub/rx/";
+  // publish what we've received
+  // home/emonD1/rx/6/values 679,236.34,-38
+  sSubject = String(mqttStatusTopic);
+  sSubject += "rx/";
   sSubject += String(iNodeId);
   sSubject += "/values";
   sData = String(iPower);
