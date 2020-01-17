@@ -37,6 +37,11 @@ const char* mqttStatusTopic = "home/emonD1/";
 SoftwareSerial rfm96Serial(D1RX_PIN, D1TX_PIN);
 String rxBuffer = "";
 
+// Store measurements globally, so we can display it on the web-gui
+int iPower = 0;
+float fVrms = 0;
+int iRSSI = 0;
+
 // handle request for web root
 void handleRoot() {
 
@@ -50,6 +55,24 @@ void handleRoot() {
   s += "<h1 style=\"color: #82afcc\">emonESP</h1>";
   s += "<h3>RFM69Pi to MQTT bridge</h3>";
   s += "</center>";
+
+  s += "<p>Last measurements:</p>";
+  s += "<ul>";
+
+  s += "<li>Power: ";
+  s += String(iPower);
+  s += " W</li>";
+
+  s += "<li>Vrms: ";
+  s += String(fVrms);
+  s += " V</li>";
+
+  s += "<li>RSSI: ";
+  s += String(iRSSI);
+  s += " dB</li>";
+
+  s += "</ul>";
+
   s += "</body>";
   s += "</html>";
 
@@ -151,7 +174,7 @@ void processPacket(String packet) {
   String sMSB = packet.substring(iPos1 + 1, iPos2);
 
   // actual power
-  int iPower = sMSB.toInt() * 256 + sLSB.toInt();
+  iPower = sMSB.toInt() * 256 + sLSB.toInt();
 
   // Vrms LSB
   iPos1 = iPos2;
@@ -164,13 +187,13 @@ void processPacket(String packet) {
   sMSB = packet.substring(iPos1 + 1, iPos2);
 
   // calculate Vrms
-  float fVrms = (sMSB.toInt() * 256 + sLSB.toInt()) / 100.0;
+  fVrms = (sMSB.toInt() * 256 + sLSB.toInt()) / 100.0;
 
   // get RSSI
   iPos1 = packet.indexOf("(");
   iPos2 = packet.indexOf(")", iPos1 + 1);
   sData = packet.substring(iPos1 + 1, iPos2);
-  int iRSSI = sData.toInt();
+  iRSSI = sData.toInt();
 
   // publish data on MQTT
   sData = String(iPower);
@@ -200,7 +223,8 @@ void processPacket(String packet) {
   Serial.print(" ");
   Serial.println(sData);
 
-  //emonhub/rx/6/values 679,236.34,-38
+  // publish what we've received
+  // home/emonD1/rx/6/values 679,236.34,-38
   sSubject = String(mqttStatusTopic);
   sSubject += "rx/";
   sSubject += String(iNodeId);
