@@ -243,20 +243,6 @@ void processPacket(String packet) {
   Serial.print(sSubject);
   Serial.print(" ");
   Serial.println(sData);
-
-  // broadcast raw packet if needed
-  #ifdef RFM69PI_DEBUG
-    // home/emonD1/rx/6/raw OK 6 167 2 82 92 (-38)
-    sSubject = String(mqttStatusTopic);
-    sSubject += "rx/";
-    sSubject += String(iNodeId);
-    sSubject += "/raw";
-    mqttClient.publish(sSubject.c_str(), packet.c_str());
-    Serial.print("Publishing: ");
-    Serial.print(sSubject);
-    Serial.print(" ");
-    Serial.println(packet);
-  #endif
 }
 
 void loop() {
@@ -278,6 +264,20 @@ void loop() {
     if (nlPos != -1) {
       // got a newline in our buffer
       String packet = rxBuffer.substring(0, nlPos);
+
+      // broadcast raw packet if needed
+      #ifdef RFM69PI_DEBUG
+        // home/emonD1/rx/6/raw OK 6 167 2 82 92 (-38)
+        String sSubject = String(mqttStatusTopic);
+        sSubject += "rx/";
+        sSubject += String(iNodeId);
+        sSubject += "/raw";
+        mqttClient.publish(sSubject.c_str(), packet.c_str());
+        Serial.print("Publishing: ");
+        Serial.print(sSubject);
+        Serial.print(" ");
+        Serial.println(packet);
+      #endif
 
       // check what we need to do
       if (packet.startsWith(">") || packet.startsWith("->")) {
