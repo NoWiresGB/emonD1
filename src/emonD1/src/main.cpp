@@ -37,6 +37,10 @@ const char* mqttStatusTopic = "home/emonD1/";
 SoftwareSerial rfm96Serial(D1RX_PIN, D1TX_PIN);
 String rxBuffer = "";
 
+// define this flag if the serial messages received from the RFM69Pi
+// should be broadcast over MQTT
+#define RFM69PI_DEBUG 1
+
 // Store measurements globally, so we can display it on the web-gui
 int iPower = 0;
 float fVrms = 0;
@@ -239,6 +243,20 @@ void processPacket(String packet) {
   Serial.print(sSubject);
   Serial.print(" ");
   Serial.println(sData);
+
+  // broadcast raw packet if needed
+  #ifdef RFM69PI_DEBUG
+    // home/emonD1/rx/6/raw OK 6 167 2 82 92 (-38)
+    sSubject = String(mqttStatusTopic);
+    sSubject += "rx/";
+    sSubject += String(iNodeId);
+    sSubject += "/raw";
+    mqttClient.publish(sSubject.c_str(), packet.c_str());
+    Serial.print("Publishing: ");
+    Serial.print(sSubject);
+    Serial.print(" ");
+    Serial.println(packet);
+  #endif
 }
 
 void loop() {
