@@ -39,12 +39,31 @@ String rxBuffer = "";
 
 // define this flag if the serial messages received from the RFM69Pi
 // should be broadcast over MQTT
-#define RFM69PI_DEBUG 0
+// #define RFM69PI_DEBUG
+
+// optional OLED display
+#define HAS_DISPLAY
+
+#ifdef HAS_DISPLAY
+  #include <Wire.h>
+  #include <Adafruit_GFX.h>
+  #include <Adafruit_SSD1306.h>
+
+  #define SCREEN_WIDTH 128 // OLED display width, in pixels
+  #define SCREEN_HEIGHT 64 // OLED display height, in pixels
+  #define OLED_RESET -1
+  Adafruit_SSD1306 oledDisplay(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+#endif
 
 // Store measurements globally, so we can display it on the web-gui
 int iPower = 0;
 float fVrms = 0;
 int iRSSI = 0;
+
+unsigned long lastMeasurement = millis();
+#ifdef HAS_DISPLAY
+  unsigned long lastDisplayUpdate = millis();
+#endif
 
 // handle request for web root
 void handleRoot() {
@@ -92,11 +111,28 @@ void setup() {
   WiFiManager wifiManager;
   wifiManager.autoConnect("emonD1_AutoConfig");
 
+  #ifdef HAS_DISPLAY
+    // initialize with the I2C addr 0x3C
+    oledDisplay.begin(SSD1306_SWITCHCAPVCC, 0x3C);  
+  #endif
+
   // dump some info to serial once we're connected
   Serial.print("Connected to ");
   Serial.println(WiFi.SSID());
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
+
+  #ifdef HAS_DISPLAY
+    oledDisplay.clearDisplay();
+  	oledDisplay.setTextSize(1);
+	  oledDisplay.setTextColor(WHITE);
+    oledDisplay.setCursor(0,0);
+	  oledDisplay.print("SSID: ");
+    oledDisplay.println(WiFi.SSID().substring(0, 15));
+    oledDisplay.print("IP: ");
+    oledDisplay.println(WiFi.localIP());
+    oledDisplay.display();
+  #endif
 
   // set up mDNS
     if (!MDNS.begin("emonD1")) {
@@ -244,6 +280,9 @@ void processPacket(String packet) {
   Serial.print(" ");
   Serial.println(sData);
 
+  // update the timestamp
+  lastMeasurement = millis();
+
   // broadcast raw packet if needed
   #ifdef RFM69PI_DEBUG
     // home/emonD1/rx/6/raw OK 6 167 2 82 92 (-38)
@@ -303,4 +342,41 @@ void loop() {
 
   // process web stuff
   httpServer.handleClient();
+
+  // update screen
+  #ifdef HAS_DISPLAY
+    // only update the screen once per second
+    if (millis() - 1000 > lastDisplayUpdate) {
+      oledDisplay.clearDisplay();
+      oledDisplay.setCursor(0,0);
+
+      oledDisplay.print("SSID: ");
+      oledDisplay.println(WiFi.SSID().substring(0, 15));
+      oledDisplay.print("IP: ");
+      oledDisplay.println(WiFi.localIP());
+      oledDisplay.println("---------------------");
+      oledDisplay.println("Last measurements:");
+
+      oledDisplay.print("Power: ");
+      oledDisplay.print(iPower);
+      oledDisplay.println("W");
+
+      oledDisplay.print("Vrms: ");
+      oledDisplay.print(fVrms);
+      oledDisplay.println("V");
+
+      oledDisplay.print("RSSI: ");
+      oledDisplay.print(iRSSI);
+      oledDisplay.println("dB");
+
+      // display the elapsed time since last received measurement
+      oledDisplay.print("                 ");
+      oledDisplay.print((millis() - lastMeasurement)/1000);
+      oledDisplay.print("s");
+      oledDisplay.display();
+
+      // update the last display update
+      lastDisplayUpdate = millis();
+    }
+  #endif
 }
