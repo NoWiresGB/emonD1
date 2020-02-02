@@ -39,7 +39,7 @@ String rxBuffer = "";
 
 // define this flag if the serial messages received from the RFM69Pi
 // should be broadcast over MQTT
-#define RFM69PI_DEBUG 0
+// #define RFM69PI_DEBUG
 
 // Store measurements globally, so we can display it on the web-gui
 int iPower = 0;
