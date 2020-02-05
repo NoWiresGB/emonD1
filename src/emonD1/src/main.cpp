@@ -7,6 +7,19 @@
 #include <WiFiManager.h>
 #include <PubSubClient.h>
 #include <SoftwareSerial.h>
+#include <EEPROM.h>
+
+// configuration structure store in EEPROM
+struct EEPROMConfig {
+  // magic byte to show if we've saved config before
+  byte magic;
+
+  // MQTT related config
+  char mqttServer[32];
+  char mqttMeasureTopic[32];
+  char mqttStatusTopic[32];
+};
+EEPROMConfig eepromData;
 
 // HTTP server
 ESP8266WebServer httpServer(80);
@@ -14,12 +27,6 @@ ESP8266WebServer httpServer(80);
 // MQTT client
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
-
-// MQTT related config
-// hardcode it for now
-const char* mqttServer = "192.168.0.254";
-const char* mqttMeasureTopic = "home/pwrsens1/";
-const char* mqttStatusTopic = "home/emonD1/";
 
 // RFM69Pi GPIO_1 pinout (top view, antenna top left corner)
 //
@@ -65,9 +72,11 @@ unsigned long lastMeasurement = millis();
   unsigned long lastDisplayUpdate = millis();
 #endif
 
+// Advance declarations
+void mqttReconnect();
+
 // handle request for web root
 void handleRoot() {
-
   // create page
   String s = "<html>";
 	s += "<head>";
@@ -75,7 +84,7 @@ void handleRoot() {
 	s += "</head>";
   s += "<body>";
   s += "<center>";
-  s += "<h1 style=\"color: #82afcc\">emonESP</h1>";
+  s += "<h1 style=\"color: #82afcc\">emonD1</h1>";
   s += "<h3>RFM69Pi to MQTT bridge</h3>";
   s += "</center>";
 
@@ -96,6 +105,8 @@ void handleRoot() {
 
   s += "</ul>";
 
+  s += "<p><a href=\"config\">Update config</a><p>";
+
   s += "</body>";
   s += "</html>";
 
@@ -103,23 +114,129 @@ void handleRoot() {
   httpServer.send(200, "text/html", s);
 }
 
+void handleConfig() {
+  // create page
+  String s = "<html>";
+	s += "<head>";
+  s += "<title>emonD1 configuration</title>";
+	s += "</head>";
+  s += "<body>";
+  s += "<center>";
+  s += "<h1 style=\"color: #82afcc\">emonD1 config</h1>";
+  s += "</center>";
+
+  s += "<p>Configuration parameters:</p>";
+
+  s += "<form action=\"/config_save\">";
+  s += "MQTT server: <input type=\"text\" name=\"mqttserver\" value=\"";
+  s += eepromData.mqttServer;
+  s += "\"><br>";
+
+  s += "MQTT measure topic: <input type=\"text\" name=\"mqttmeasuretopic\" value=\"";
+  s += eepromData.mqttMeasureTopic;
+  s += "\"><br>";
+
+  s += "MQTT status topic: <input type=\"text\" name=\"mqttstatustopic\" value=\"";
+  s += eepromData.mqttStatusTopic;
+  s += "\"><br>";
+
+  s += "<input type=\"submit\" value=\"Save\">";
+  s += "</form>";
+
+  s += "</body>";
+  s += "</html>";
+
+  // sent html response
+  httpServer.send(200, "text/html", s);
+}
+
+void handleConfigSave() {
+  bool reconnect = false;
+
+  // check parameters
+  if (httpServer.hasArg("mqttserver")) {
+    if (!httpServer.arg("mqttserver").equals(eepromData.mqttServer)) {
+      // we need to reconnect to the new MQTT server
+      reconnect = true;
+      strcpy(eepromData.mqttServer, httpServer.arg("mqttserver").c_str());
+    }
+  }
+
+  if (httpServer.hasArg("mqttmeasuretopic")) {
+    strcpy(eepromData.mqttMeasureTopic, httpServer.arg("mqttmeasuretopic").c_str());
+  }
+
+  if (httpServer.hasArg("mqttstatustopic")) {
+    strcpy(eepromData.mqttStatusTopic, httpServer.arg("mqttstatustopic").c_str());
+  }
+
+  // save data to EEPROM
+  eepromData.magic = 0xAB;
+  EEPROM.put(0, eepromData);
+  EEPROM.commit();
+  Serial.println("[EEPR] Saved configration to EEPROM");
+
+  // check if we need to reconnect
+  if (reconnect) {
+    mqttClient.disconnect();
+    Serial.println("[MQTT] Disconnected from old server");
+    mqttClient.setServer(eepromData.mqttServer, 1883);
+    mqttReconnect();
+  }
+
+  String s = "<html>";
+	s += "<head>";
+  s += "<title>emonD1 configuration</title>";
+	s += "</head>";
+  s += "<body>";
+  s += "<center>";
+  s += "<h1 style=\"color: #82afcc\">emonD1 config save success</h1>";
+  s += "</center>";
+
+  s += "<p><center><a href=\"/\">Return to main screen</a></center><p>";
+
+  s += "</body>";
+  s += "</html>";
+
+  httpServer.send(200, "text/html", s);
+}
+
 void setup() {
   // init serial @ 115200
   Serial.begin(115200);
+  // start with a clear line
+  Serial.println();
 
   // start WiFi auto configuration
   WiFiManager wifiManager;
   wifiManager.autoConnect("emonD1_AutoConfig");
 
+  // read configuration from EEPROM
+  EEPROM.begin(128);
+  Serial.println("[EEPR] Reading config from EEPROM");
+  EEPROM.get(0, eepromData);
+  // check magic byte - should be set to 0xAB if config has been saved to EEPROM before
+  if (eepromData.magic == 0xAB) {
+    Serial.println("[EEPR] Config checks out");
+  } else {
+    // set defaults
+    Serial.println("[EEPR] Config not saved before - falling back to defaults");
+    strcpy(eepromData.mqttServer, "192.168.0.254");
+    strcpy(eepromData.mqttMeasureTopic, "home/pwrsens1/");
+    strcpy(eepromData.mqttStatusTopic, "home/emonD1/");
+  }
+
+
   #ifdef HAS_DISPLAY
     // initialize with the I2C addr 0x3C
-    oledDisplay.begin(SSD1306_SWITCHCAPVCC, 0x3C);  
+    oledDisplay.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+    Serial.println("[OLED] Display initialised");
   #endif
 
   // dump some info to serial once we're connected
-  Serial.print("Connected to ");
+  Serial.print("[WIFI] Connected to ");
   Serial.println(WiFi.SSID());
-  Serial.print("IP address: ");
+  Serial.print("[WIFI] IP address: ");
   Serial.println(WiFi.localIP());
 
   #ifdef HAS_DISPLAY
@@ -135,26 +252,28 @@ void setup() {
   #endif
 
   // set up mDNS
-    if (!MDNS.begin("emonD1")) {
-    Serial.println("Error setting up mDNS responder!");
+  if (!MDNS.begin("emonD1")) {
+    Serial.println("[MDNS] Error setting up mDNS responder!");
     while (1) {
       delay(1000);
     }
   }
-  Serial.println("mDNS responder started - hostname emonD1.local");
+  Serial.println("[MDNS] Responder started - hostname emonD1.local");
 
   // Start HTTP server
   httpServer.begin();
-  Serial.println("HTTP server started");
+  Serial.println("[HTTP] Server started");
 
   // add page(s) to HTTP server
   httpServer.on("/", handleRoot);
+  httpServer.on("/config", handleConfig);
+  httpServer.on("/config_save", handleConfigSave);
 
   // Add service to MDNS-SD
   MDNS.addService("http", "tcp", 80);
 
   // Set up MQTT connection
-  mqttClient.setServer(mqttServer, 1883);
+  mqttClient.setServer(eepromData.mqttServer, 1883);
 
   // init serial towards RFM69Pi
   rfm96Serial.begin(38400);
@@ -165,25 +284,20 @@ void setup() {
 }
 
 void mqttReconnect() {
-  // Loop until we're reconnected
-  while (!mqttClient.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Create a random client ID
-    String clientId = "emonD1-";
-    clientId += String(random(0xffff), HEX);
-    // Attempt to connect
-    if (mqttClient.connect(clientId.c_str())) {
-      Serial.println("MQTT connected");
-      String sStatus = String(mqttStatusTopic);
-      sStatus += "status";
-      mqttClient.publish(sStatus.c_str(), "connected");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(mqttClient.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
+  Serial.print("[MQTT] Attempting connection...");
+  // Create a random client ID
+  String clientId = "emonD1-";
+  clientId += String(random(0xffff), HEX);
+  // Attempt to connect
+  if (mqttClient.connect(clientId.c_str())) {
+    Serial.println("[MQTT] Connected");
+    String sStatus = String(eepromData.mqttStatusTopic);
+    sStatus += "status";
+    mqttClient.publish(sStatus.c_str(), "connected");
+  } else {
+    Serial.print("[MQTT] Connect failed, rc=");
+    Serial.print(mqttClient.state());
+    Serial.println("; try again in the next round");
   }
 }
 
@@ -193,7 +307,7 @@ void processPacket(String packet) {
   // <OK> <node id> <power1 LSB> <power1 MSB> <Vrms LSB> <Vrms MSB> (<RSSI>)
 
   // dump received packet
-  Serial.print("processing received packet: '");
+  Serial.print("[RF69] processing received packet: '");
   Serial.print(packet);
   Serial.println("'");
 
@@ -235,66 +349,77 @@ void processPacket(String packet) {
   sData = packet.substring(iPos1 + 1, iPos2);
   iRSSI = sData.toInt();
 
+  String sSubject;
+
   // publish data on MQTT
-  sData = String(iPower);
-  String sSubject = String(mqttMeasureTopic);
-  sSubject += "power1";
-  mqttClient.publish(sSubject.c_str(), sData.c_str());
-  Serial.print("Publishing: ");
-  Serial.print(sSubject);
-  Serial.print(" ");
-  Serial.println(sData);
+  if (mqttClient.connected()) {
+    sData = String(iPower);
+    sSubject = String(eepromData.mqttMeasureTopic);
+    sSubject += "power1";
+    mqttClient.publish(sSubject.c_str(), sData.c_str());
+    Serial.print("[MQTT] Publishing: ");
+    Serial.print(sSubject);
+    Serial.print(" ");
+    Serial.println(sData);
 
-  sData = String(fVrms);
-  sSubject = String(mqttMeasureTopic);
-  sSubject += "vrms";
-  mqttClient.publish(sSubject.c_str(), sData.c_str());
-  Serial.print("Publishing: ");
-  Serial.print(sSubject);
-  Serial.print(" ");
-  Serial.println(sData);
+    sData = String(fVrms);
+    sSubject = String(eepromData.mqttMeasureTopic);
+    sSubject += "vrms";
+    mqttClient.publish(sSubject.c_str(), sData.c_str());
+    Serial.print("[MQTT] Publishing: ");
+    Serial.print(sSubject);
+    Serial.print(" ");
+    Serial.println(sData);
 
-  sData = String(iRSSI);
-  sSubject = String(mqttMeasureTopic);
-  sSubject += "rssi";
-  mqttClient.publish(sSubject.c_str(), sData.c_str());
-  Serial.print("Publishing: ");
-  Serial.print(sSubject);
-  Serial.print(" ");
-  Serial.println(sData);
+    sData = String(iRSSI);
+    sSubject = String(eepromData.mqttMeasureTopic);
+    sSubject += "rssi";
+    mqttClient.publish(sSubject.c_str(), sData.c_str());
+    Serial.print("[MQTT] Publishing: ");
+    Serial.print(sSubject);
+    Serial.print(" ");
+    Serial.println(sData);
 
-  // publish what we've received
-  // home/emonD1/rx/6/values 679,236.34,-38
-  sSubject = String(mqttStatusTopic);
-  sSubject += "rx/";
-  sSubject += String(iNodeId);
-  sSubject += "/values";
-  sData = String(iPower);
-  sData += ",";
-  sData += String(fVrms);
-  sData += ",";
-  sData += String(iRSSI);
-  mqttClient.publish(sSubject.c_str(), sData.c_str());
-  Serial.print("Publishing: ");
-  Serial.print(sSubject);
-  Serial.print(" ");
-  Serial.println(sData);
+    // publish what we've received
+    // home/emonD1/rx/6/values 679,236.34,-38
+    sSubject = String(eepromData.mqttStatusTopic);
+    sSubject += "rx/";
+    sSubject += String(iNodeId);
+    sSubject += "/values";
+    sData = String(iPower);
+    sData += ",";
+    sData += String(fVrms);
+    sData += ",";
+    sData += String(iRSSI);
+
+    mqttClient.publish(sSubject.c_str(), sData.c_str());
+    Serial.print("[MQTT] Publishing: ");
+    Serial.print(sSubject);
+    Serial.print(" ");
+    Serial.println(sData);
+  } else {
+    Serial.println("[MQTT] Not connected; skipping publish");
+  }
 
   // update the timestamp
   lastMeasurement = millis();
 
   // broadcast raw packet if needed
   #ifdef RFM69PI_DEBUG
-    // home/emonD1/rx/6/raw OK 6 167 2 82 92 (-38)
-    sSubject = String(mqttStatusTopic);
-    sSubject += "rx/";
-    sSubject += String(iNodeId);
-    sSubject += "/raw";
-    mqttClient.publish(sSubject.c_str(), packet.c_str());
-    Serial.print("Publishing: ");
-    Serial.print(sSubject);
-    Serial.print(" ");
-    Serial.println(packet);
+    if (mqttClient.connected()) {
+      // home/emonD1/rx/6/raw OK 6 167 2 82 92 (-38)
+      sSubject = String(eepromData.mqttStatusTopic);
+      sSubject += "rx/";
+      sSubject += String(iNodeId);
+      sSubject += "/raw";
+      mqttClient.publish(sSubject.c_str(), packet.c_str());
+      Serial.print("[MQTT] Publishing: ");
+      Serial.print(sSubject);
+      Serial.print(" ");
+      Serial.println(packet);
+    } else {
+      Serial.println("[MQTT] Not connected; skipping publish");
+    }
   #endif
 }
 
@@ -302,10 +427,11 @@ void loop() {
   // run mDNS update
   MDNS.update();
 
-  // process MQTT stuff
-    if (!mqttClient.connected()) {
+  // check if we're connected
+  if (!mqttClient.connected()) {
     mqttReconnect();
   }
+  // process MQTT stuff
   mqttClient.loop();
 
   // Process serial stuff from RFM69Pi
@@ -321,13 +447,13 @@ void loop() {
       // check what we need to do
       if (packet.startsWith(">") || packet.startsWith("->")) {
         // this is an acknowledgement - no need to process it
-        Serial.print("command acknowledgement: ");
+        Serial.print("[RF69] command acknowledgement: ");
         Serial.println(packet);
       } else if (packet.startsWith("OK")) {
         // this is an actual packet
         processPacket(packet);
       } else {
-        Serial.print("Ignoring invalid packet: ");
+        Serial.print("[RF69] Ignoring invalid packet: ");
         Serial.println(packet);
       }
 
