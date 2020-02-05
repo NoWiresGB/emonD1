@@ -72,9 +72,11 @@ unsigned long lastMeasurement = millis();
   unsigned long lastDisplayUpdate = millis();
 #endif
 
+// Advance declarations
+void mqttReconnect();
+
 // handle request for web root
 void handleRoot() {
-
   // create page
   String s = "<html>";
 	s += "<head>";
@@ -82,7 +84,7 @@ void handleRoot() {
 	s += "</head>";
   s += "<body>";
   s += "<center>";
-  s += "<h1 style=\"color: #82afcc\">emonESP</h1>";
+  s += "<h1 style=\"color: #82afcc\">emonD1</h1>";
   s += "<h3>RFM69Pi to MQTT bridge</h3>";
   s += "</center>";
 
@@ -103,6 +105,8 @@ void handleRoot() {
 
   s += "</ul>";
 
+  s += "<p><a href=\"config\">Update config</a><p>";
+
   s += "</body>";
   s += "</html>";
 
@@ -110,15 +114,105 @@ void handleRoot() {
   httpServer.send(200, "text/html", s);
 }
 
+void handleConfig() {
+  // create page
+  String s = "<html>";
+	s += "<head>";
+  s += "<title>emonD1 configuration</title>";
+	s += "</head>";
+  s += "<body>";
+  s += "<center>";
+  s += "<h1 style=\"color: #82afcc\">emonD1 config</h1>";
+  s += "</center>";
+
+  s += "<p>Configuration parameters:</p>";
+
+  s += "<form action=\"/config_save\">";
+  s += "MQTT server: <input type=\"text\" name=\"mqttserver\" value=\"";
+  s += eepromData.mqttServer;
+  s += "\"><br>";
+
+  s += "MQTT measure topic: <input type=\"text\" name=\"mqttmeasuretopic\" value=\"";
+  s += eepromData.mqttMeasureTopic;
+  s += "\"><br>";
+
+  s += "MQTT status topic: <input type=\"text\" name=\"mqttstatustopic\" value=\"";
+  s += eepromData.mqttStatusTopic;
+  s += "\"><br>";
+
+  s += "<input type=\"submit\" value=\"Save\">";
+  s += "</form>";
+
+  s += "</body>";
+  s += "</html>";
+
+  // sent html response
+  httpServer.send(200, "text/html", s);
+}
+
+void handleConfigSave() {
+  bool reconnect = false;
+
+  // check parameters
+  if (httpServer.hasArg("mqttserver")) {
+    if (!httpServer.arg("mqttserver").equals(eepromData.mqttServer)) {
+      // we need to reconnect to the new MQTT server
+      reconnect = true;
+      strcpy(eepromData.mqttServer, httpServer.arg("mqttserver").c_str());
+    }
+  }
+
+  if (httpServer.hasArg("mqttmeasuretopic")) {
+    strcpy(eepromData.mqttMeasureTopic, httpServer.arg("mqttmeasuretopic").c_str());
+  }
+
+  if (httpServer.hasArg("mqttstatustopic")) {
+    strcpy(eepromData.mqttStatusTopic, httpServer.arg("mqttstatustopic").c_str());
+  }
+
+  // save data to EEPROM
+  eepromData.magic = 0xAB;
+  EEPROM.put(0, eepromData);
+  EEPROM.commit();
+  Serial.println("[EEPR] Saved configration to EEPROM");
+
+  // check if we need to reconnect
+  if (reconnect) {
+    mqttClient.disconnect();
+    Serial.println("[MQTT] Disconnected from old server");
+    mqttClient.setServer(eepromData.mqttServer, 1883);
+    mqttReconnect();
+  }
+
+  String s = "<html>";
+	s += "<head>";
+  s += "<title>emonD1 configuration</title>";
+	s += "</head>";
+  s += "<body>";
+  s += "<center>";
+  s += "<h1 style=\"color: #82afcc\">emonD1 config save success</h1>";
+  s += "</center>";
+
+  s += "<p><center><a href=\"/\">Return to main screen</a></center><p>";
+
+  s += "</body>";
+  s += "</html>";
+
+  httpServer.send(200, "text/html", s);
+}
+
 void setup() {
   // init serial @ 115200
   Serial.begin(115200);
+  // start with a clear line
+  Serial.println();
 
   // start WiFi auto configuration
   WiFiManager wifiManager;
   wifiManager.autoConnect("emonD1_AutoConfig");
 
   // read configuration from EEPROM
+  EEPROM.begin(128);
   Serial.println("[EEPR] Reading config from EEPROM");
   EEPROM.get(0, eepromData);
   // check magic byte - should be set to 0xAB if config has been saved to EEPROM before
@@ -131,6 +225,7 @@ void setup() {
     strcpy(eepromData.mqttMeasureTopic, "home/pwrsens1/");
     strcpy(eepromData.mqttStatusTopic, "home/emonD1/");
   }
+
 
   #ifdef HAS_DISPLAY
     // initialize with the I2C addr 0x3C
@@ -171,6 +266,8 @@ void setup() {
 
   // add page(s) to HTTP server
   httpServer.on("/", handleRoot);
+  httpServer.on("/config", handleConfig);
+  httpServer.on("/config_save", handleConfigSave);
 
   // Add service to MDNS-SD
   MDNS.addService("http", "tcp", 80);
