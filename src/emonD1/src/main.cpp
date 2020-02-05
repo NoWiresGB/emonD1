@@ -235,66 +235,77 @@ void processPacket(String packet) {
   sData = packet.substring(iPos1 + 1, iPos2);
   iRSSI = sData.toInt();
 
+  String sSubject;
+
   // publish data on MQTT
-  sData = String(iPower);
-  String sSubject = String(mqttMeasureTopic);
-  sSubject += "power1";
-  mqttClient.publish(sSubject.c_str(), sData.c_str());
-  Serial.print("Publishing: ");
-  Serial.print(sSubject);
-  Serial.print(" ");
-  Serial.println(sData);
+  if (mqttClient.connected()) {
+    sData = String(iPower);
+    sSubject = String(mqttMeasureTopic);
+    sSubject += "power1";
+    mqttClient.publish(sSubject.c_str(), sData.c_str());
+    Serial.print("Publishing: ");
+    Serial.print(sSubject);
+    Serial.print(" ");
+    Serial.println(sData);
 
-  sData = String(fVrms);
-  sSubject = String(mqttMeasureTopic);
-  sSubject += "vrms";
-  mqttClient.publish(sSubject.c_str(), sData.c_str());
-  Serial.print("Publishing: ");
-  Serial.print(sSubject);
-  Serial.print(" ");
-  Serial.println(sData);
+    sData = String(fVrms);
+    sSubject = String(mqttMeasureTopic);
+    sSubject += "vrms";
+    mqttClient.publish(sSubject.c_str(), sData.c_str());
+    Serial.print("Publishing: ");
+    Serial.print(sSubject);
+    Serial.print(" ");
+    Serial.println(sData);
 
-  sData = String(iRSSI);
-  sSubject = String(mqttMeasureTopic);
-  sSubject += "rssi";
-  mqttClient.publish(sSubject.c_str(), sData.c_str());
-  Serial.print("Publishing: ");
-  Serial.print(sSubject);
-  Serial.print(" ");
-  Serial.println(sData);
+    sData = String(iRSSI);
+    sSubject = String(mqttMeasureTopic);
+    sSubject += "rssi";
+    mqttClient.publish(sSubject.c_str(), sData.c_str());
+    Serial.print("Publishing: ");
+    Serial.print(sSubject);
+    Serial.print(" ");
+    Serial.println(sData);
 
-  // publish what we've received
-  // home/emonD1/rx/6/values 679,236.34,-38
-  sSubject = String(mqttStatusTopic);
-  sSubject += "rx/";
-  sSubject += String(iNodeId);
-  sSubject += "/values";
-  sData = String(iPower);
-  sData += ",";
-  sData += String(fVrms);
-  sData += ",";
-  sData += String(iRSSI);
-  mqttClient.publish(sSubject.c_str(), sData.c_str());
-  Serial.print("Publishing: ");
-  Serial.print(sSubject);
-  Serial.print(" ");
-  Serial.println(sData);
+    // publish what we've received
+    // home/emonD1/rx/6/values 679,236.34,-38
+    sSubject = String(mqttStatusTopic);
+    sSubject += "rx/";
+    sSubject += String(iNodeId);
+    sSubject += "/values";
+    sData = String(iPower);
+    sData += ",";
+    sData += String(fVrms);
+    sData += ",";
+    sData += String(iRSSI);
+
+    mqttClient.publish(sSubject.c_str(), sData.c_str());
+    Serial.print("Publishing: ");
+    Serial.print(sSubject);
+    Serial.print(" ");
+    Serial.println(sData);
+  } else {
+    Serial.println("MQTT not connected; skipping publish");
+  }
 
   // update the timestamp
   lastMeasurement = millis();
 
   // broadcast raw packet if needed
   #ifdef RFM69PI_DEBUG
-    // home/emonD1/rx/6/raw OK 6 167 2 82 92 (-38)
-    sSubject = String(mqttStatusTopic);
-    sSubject += "rx/";
-    sSubject += String(iNodeId);
-    sSubject += "/raw";
-    mqttClient.publish(sSubject.c_str(), packet.c_str());
-    Serial.print("Publishing: ");
-    Serial.print(sSubject);
-    Serial.print(" ");
-    Serial.println(packet);
+    if (mqttClient.connected()) {
+      // home/emonD1/rx/6/raw OK 6 167 2 82 92 (-38)
+      sSubject = String(mqttStatusTopic);
+      sSubject += "rx/";
+      sSubject += String(iNodeId);
+      sSubject += "/raw";
+      mqttClient.publish(sSubject.c_str(), packet.c_str());
+      Serial.print("Publishing: ");
+      Serial.print(sSubject);
+      Serial.print(" ");
+      Serial.println(packet);
+    } else {
+      Serial.println("MQTT not connected; skipping publish");
+    }
   #endif
 }
 
