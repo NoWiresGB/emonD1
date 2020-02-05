@@ -7,6 +7,19 @@
 #include <WiFiManager.h>
 #include <PubSubClient.h>
 #include <SoftwareSerial.h>
+#include <EEPROM.h>
+
+// configuration structure store in EEPROM
+struct EEPROMConfig {
+  // magic byte to show if we've saved config before
+  byte magic;
+
+  // MQTT related config
+  char mqttServer[32];
+  char mqttMeasureTopic[32];
+  char mqttStatusTopic[32];
+};
+EEPROMConfig eepromData;
 
 // HTTP server
 ESP8266WebServer httpServer(80);
@@ -14,12 +27,6 @@ ESP8266WebServer httpServer(80);
 // MQTT client
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
-
-// MQTT related config
-// hardcode it for now
-const char* mqttServer = "192.168.0.254";
-const char* mqttMeasureTopic = "home/pwrsens1/";
-const char* mqttStatusTopic = "home/emonD1/";
 
 // RFM69Pi GPIO_1 pinout (top view, antenna top left corner)
 //
@@ -111,6 +118,20 @@ void setup() {
   WiFiManager wifiManager;
   wifiManager.autoConnect("emonD1_AutoConfig");
 
+  // read configuration from EEPROM
+  Serial.println("[EEPR] Reading config from EEPROM");
+  EEPROM.get(0, eepromData);
+  // check magic byte - should be set to 0xAB if config has been saved to EEPROM before
+  if (eepromData.magic == 0xAB) {
+    Serial.println("[EEPR] Config checks out");
+  } else {
+    // set defaults
+    Serial.println("[EEPR] Config not saved before - falling back to defaults");
+    strcpy(eepromData.mqttServer, "192.168.0.254");
+    strcpy(eepromData.mqttMeasureTopic, "home/pwrsens1/");
+    strcpy(eepromData.mqttStatusTopic, "home/emonD1/");
+  }
+
   #ifdef HAS_DISPLAY
     // initialize with the I2C addr 0x3C
     oledDisplay.begin(SSD1306_SWITCHCAPVCC, 0x3C);
@@ -155,7 +176,7 @@ void setup() {
   MDNS.addService("http", "tcp", 80);
 
   // Set up MQTT connection
-  mqttClient.setServer(mqttServer, 1883);
+  mqttClient.setServer(eepromData.mqttServer, 1883);
 
   // init serial towards RFM69Pi
   rfm96Serial.begin(38400);
@@ -173,7 +194,7 @@ void mqttReconnect() {
   // Attempt to connect
   if (mqttClient.connect(clientId.c_str())) {
     Serial.println("[MQTT] Connected");
-    String sStatus = String(mqttStatusTopic);
+    String sStatus = String(eepromData.mqttStatusTopic);
     sStatus += "status";
     mqttClient.publish(sStatus.c_str(), "connected");
   } else {
@@ -236,7 +257,7 @@ void processPacket(String packet) {
   // publish data on MQTT
   if (mqttClient.connected()) {
     sData = String(iPower);
-    sSubject = String(mqttMeasureTopic);
+    sSubject = String(eepromData.mqttMeasureTopic);
     sSubject += "power1";
     mqttClient.publish(sSubject.c_str(), sData.c_str());
     Serial.print("[MQTT] Publishing: ");
@@ -245,7 +266,7 @@ void processPacket(String packet) {
     Serial.println(sData);
 
     sData = String(fVrms);
-    sSubject = String(mqttMeasureTopic);
+    sSubject = String(eepromData.mqttMeasureTopic);
     sSubject += "vrms";
     mqttClient.publish(sSubject.c_str(), sData.c_str());
     Serial.print("[MQTT] Publishing: ");
@@ -254,7 +275,7 @@ void processPacket(String packet) {
     Serial.println(sData);
 
     sData = String(iRSSI);
-    sSubject = String(mqttMeasureTopic);
+    sSubject = String(eepromData.mqttMeasureTopic);
     sSubject += "rssi";
     mqttClient.publish(sSubject.c_str(), sData.c_str());
     Serial.print("[MQTT] Publishing: ");
@@ -264,7 +285,7 @@ void processPacket(String packet) {
 
     // publish what we've received
     // home/emonD1/rx/6/values 679,236.34,-38
-    sSubject = String(mqttStatusTopic);
+    sSubject = String(eepromData.mqttStatusTopic);
     sSubject += "rx/";
     sSubject += String(iNodeId);
     sSubject += "/values";
@@ -290,7 +311,7 @@ void processPacket(String packet) {
   #ifdef RFM69PI_DEBUG
     if (mqttClient.connected()) {
       // home/emonD1/rx/6/raw OK 6 167 2 82 92 (-38)
-      sSubject = String(mqttStatusTopic);
+      sSubject = String(eepromData.mqttStatusTopic);
       sSubject += "rx/";
       sSubject += String(iNodeId);
       sSubject += "/raw";
