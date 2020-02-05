@@ -165,25 +165,20 @@ void setup() {
 }
 
 void mqttReconnect() {
-  // Loop until we're reconnected
-  while (!mqttClient.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Create a random client ID
-    String clientId = "emonD1-";
-    clientId += String(random(0xffff), HEX);
-    // Attempt to connect
-    if (mqttClient.connect(clientId.c_str())) {
-      Serial.println("MQTT connected");
-      String sStatus = String(mqttStatusTopic);
-      sStatus += "status";
-      mqttClient.publish(sStatus.c_str(), "connected");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(mqttClient.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
+  Serial.print("Attempting MQTT connection...");
+  // Create a random client ID
+  String clientId = "emonD1-";
+  clientId += String(random(0xffff), HEX);
+  // Attempt to connect
+  if (mqttClient.connect(clientId.c_str())) {
+    Serial.println("MQTT connected");
+    String sStatus = String(mqttStatusTopic);
+    sStatus += "status";
+    mqttClient.publish(sStatus.c_str(), "connected");
+  } else {
+    Serial.print("failed, rc=");
+    Serial.print(mqttClient.state());
+    Serial.println("; try again in the next round");
   }
 }
 
@@ -313,10 +308,11 @@ void loop() {
   // run mDNS update
   MDNS.update();
 
-  // process MQTT stuff
-    if (!mqttClient.connected()) {
+  // check if we're connected
+  if (!mqttClient.connected()) {
     mqttReconnect();
   }
+  // process MQTT stuff
   mqttClient.loop();
 
   // Process serial stuff from RFM69Pi
