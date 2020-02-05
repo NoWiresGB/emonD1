@@ -113,13 +113,14 @@ void setup() {
 
   #ifdef HAS_DISPLAY
     // initialize with the I2C addr 0x3C
-    oledDisplay.begin(SSD1306_SWITCHCAPVCC, 0x3C);  
+    oledDisplay.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+    Serial.println("[OLED] Display initialised");
   #endif
 
   // dump some info to serial once we're connected
-  Serial.print("Connected to ");
+  Serial.print("[WIFI] Connected to ");
   Serial.println(WiFi.SSID());
-  Serial.print("IP address: ");
+  Serial.print("[WIFI] IP address: ");
   Serial.println(WiFi.localIP());
 
   #ifdef HAS_DISPLAY
@@ -135,17 +136,17 @@ void setup() {
   #endif
 
   // set up mDNS
-    if (!MDNS.begin("emonD1")) {
-    Serial.println("Error setting up mDNS responder!");
+  if (!MDNS.begin("emonD1")) {
+    Serial.println("[MDNS] Error setting up mDNS responder!");
     while (1) {
       delay(1000);
     }
   }
-  Serial.println("mDNS responder started - hostname emonD1.local");
+  Serial.println("[MDNS] Responder started - hostname emonD1.local");
 
   // Start HTTP server
   httpServer.begin();
-  Serial.println("HTTP server started");
+  Serial.println("[HTTP] Server started");
 
   // add page(s) to HTTP server
   httpServer.on("/", handleRoot);
@@ -165,18 +166,18 @@ void setup() {
 }
 
 void mqttReconnect() {
-  Serial.print("Attempting MQTT connection...");
+  Serial.print("[MQTT] Attempting connection...");
   // Create a random client ID
   String clientId = "emonD1-";
   clientId += String(random(0xffff), HEX);
   // Attempt to connect
   if (mqttClient.connect(clientId.c_str())) {
-    Serial.println("MQTT connected");
+    Serial.println("[MQTT] Connected");
     String sStatus = String(mqttStatusTopic);
     sStatus += "status";
     mqttClient.publish(sStatus.c_str(), "connected");
   } else {
-    Serial.print("failed, rc=");
+    Serial.print("[MQTT] Connect failed, rc=");
     Serial.print(mqttClient.state());
     Serial.println("; try again in the next round");
   }
@@ -188,7 +189,7 @@ void processPacket(String packet) {
   // <OK> <node id> <power1 LSB> <power1 MSB> <Vrms LSB> <Vrms MSB> (<RSSI>)
 
   // dump received packet
-  Serial.print("processing received packet: '");
+  Serial.print("[RF69] processing received packet: '");
   Serial.print(packet);
   Serial.println("'");
 
@@ -238,7 +239,7 @@ void processPacket(String packet) {
     sSubject = String(mqttMeasureTopic);
     sSubject += "power1";
     mqttClient.publish(sSubject.c_str(), sData.c_str());
-    Serial.print("Publishing: ");
+    Serial.print("[MQTT] Publishing: ");
     Serial.print(sSubject);
     Serial.print(" ");
     Serial.println(sData);
@@ -247,7 +248,7 @@ void processPacket(String packet) {
     sSubject = String(mqttMeasureTopic);
     sSubject += "vrms";
     mqttClient.publish(sSubject.c_str(), sData.c_str());
-    Serial.print("Publishing: ");
+    Serial.print("[MQTT] Publishing: ");
     Serial.print(sSubject);
     Serial.print(" ");
     Serial.println(sData);
@@ -256,7 +257,7 @@ void processPacket(String packet) {
     sSubject = String(mqttMeasureTopic);
     sSubject += "rssi";
     mqttClient.publish(sSubject.c_str(), sData.c_str());
-    Serial.print("Publishing: ");
+    Serial.print("[MQTT] Publishing: ");
     Serial.print(sSubject);
     Serial.print(" ");
     Serial.println(sData);
@@ -274,12 +275,12 @@ void processPacket(String packet) {
     sData += String(iRSSI);
 
     mqttClient.publish(sSubject.c_str(), sData.c_str());
-    Serial.print("Publishing: ");
+    Serial.print("[MQTT] Publishing: ");
     Serial.print(sSubject);
     Serial.print(" ");
     Serial.println(sData);
   } else {
-    Serial.println("MQTT not connected; skipping publish");
+    Serial.println("[MQTT] Not connected; skipping publish");
   }
 
   // update the timestamp
@@ -294,12 +295,12 @@ void processPacket(String packet) {
       sSubject += String(iNodeId);
       sSubject += "/raw";
       mqttClient.publish(sSubject.c_str(), packet.c_str());
-      Serial.print("Publishing: ");
+      Serial.print("[MQTT] Publishing: ");
       Serial.print(sSubject);
       Serial.print(" ");
       Serial.println(packet);
     } else {
-      Serial.println("MQTT not connected; skipping publish");
+      Serial.println("[MQTT] Not connected; skipping publish");
     }
   #endif
 }
@@ -328,13 +329,13 @@ void loop() {
       // check what we need to do
       if (packet.startsWith(">") || packet.startsWith("->")) {
         // this is an acknowledgement - no need to process it
-        Serial.print("command acknowledgement: ");
+        Serial.print("[RF69] command acknowledgement: ");
         Serial.println(packet);
       } else if (packet.startsWith("OK")) {
         // this is an actual packet
         processPacket(packet);
       } else {
-        Serial.print("Ignoring invalid packet: ");
+        Serial.print("[RF69] Ignoring invalid packet: ");
         Serial.println(packet);
       }
 
