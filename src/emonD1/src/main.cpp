@@ -18,6 +18,9 @@ struct EEPROMConfig {
   char mqttServer[32];
   char mqttMeasureTopic[32];
   char mqttStatusTopic[32];
+
+  // mDNS name
+  char mDNSName[16];
 };
 EEPROMConfig eepromData;
 
@@ -84,8 +87,9 @@ void handleRoot() {
 	s += "</head>";
   s += "<body>";
   s += "<center>";
-  s += "<h1 style=\"color: #82afcc\">emonD1</h1>";
-  s += "<h3>RFM69Pi to MQTT bridge</h3>";
+  s += "<h1 style=\"color: #82afcc\">";
+  s += eepromData.mDNSName;
+  s += ".local</h1><h3>RFM69Pi to MQTT bridge</h3>";
   s += "</center>";
 
   s += "<p>Last measurements:</p>";
@@ -118,11 +122,11 @@ void handleConfig() {
   // create page
   String s = "<html>";
 	s += "<head>";
-  s += "<title>emonD1 configuration</title>";
+  s += "<title>Configuration</title>";
 	s += "</head>";
   s += "<body>";
   s += "<center>";
-  s += "<h1 style=\"color: #82afcc\">emonD1 config</h1>";
+  s += "<h1 style=\"color: #82afcc\">Configuration</h1>";
   s += "</center>";
 
   s += "<p>Configuration parameters:</p>";
@@ -140,6 +144,10 @@ void handleConfig() {
   s += eepromData.mqttStatusTopic;
   s += "\"><br>";
 
+  s += "mDNS name: <input type=\"text\" name=\"mdnsname\" value=\"";
+  s += eepromData.mDNSName;
+  s += "\"><br>";
+
   s += "<input type=\"submit\" value=\"Save\">";
   s += "</form>";
 
@@ -152,6 +160,7 @@ void handleConfig() {
 
 void handleConfigSave() {
   bool reconnect = false;
+  bool reregister = false;
 
   // check parameters
   if (httpServer.hasArg("mqttserver")) {
@@ -170,8 +179,16 @@ void handleConfigSave() {
     strcpy(eepromData.mqttStatusTopic, httpServer.arg("mqttstatustopic").c_str());
   }
 
+  if (httpServer.hasArg("mdnsname")) {
+    if (!httpServer.arg("mdnsname").equals(eepromData.mDNSName)) {
+      // we need to re-register with mDNS
+      reregister = true;
+      strcpy(eepromData.mDNSName, httpServer.arg("mdnsname").c_str());
+    }
+  }
+
   // save data to EEPROM
-  eepromData.magic = 0xAB;
+  eepromData.magic = 0xAC;
   EEPROM.put(0, eepromData);
   EEPROM.commit();
   Serial.println("[EEPR] Saved configration to EEPROM");
@@ -182,6 +199,16 @@ void handleConfigSave() {
     Serial.println("[MQTT] Disconnected from old server");
     mqttClient.setServer(eepromData.mqttServer, 1883);
     mqttReconnect();
+  }
+
+  // check if we need to re-register
+  if (reregister) {
+    MDNS.setHostname(eepromData.mDNSName);
+    MDNS.notifyAPChange();
+
+    Serial.print("[MDNS] Responder updated - hostname ");
+    Serial.print(eepromData.mDNSName);
+    Serial.println(".local");
   }
 
   String s = "<html>";
@@ -216,7 +243,7 @@ void setup() {
   Serial.println("[EEPR] Reading config from EEPROM");
   EEPROM.get(0, eepromData);
   // check magic byte - should be set to 0xAB if config has been saved to EEPROM before
-  if (eepromData.magic == 0xAB) {
+  if (eepromData.magic == 0xAC) {
     Serial.println("[EEPR] Config checks out");
   } else {
     // set defaults
@@ -224,8 +251,8 @@ void setup() {
     strcpy(eepromData.mqttServer, "192.168.0.254");
     strcpy(eepromData.mqttMeasureTopic, "home/pwrsens1/");
     strcpy(eepromData.mqttStatusTopic, "home/emonD1/");
+    strcpy(eepromData.mDNSName, "emonD1");
   }
-
 
   #ifdef HAS_DISPLAY
     // initialize with the I2C addr 0x3C
@@ -252,13 +279,15 @@ void setup() {
   #endif
 
   // set up mDNS
-  if (!MDNS.begin("emonD1")) {
+  if (!MDNS.begin(eepromData.mDNSName)) {
     Serial.println("[MDNS] Error setting up mDNS responder!");
     while (1) {
       delay(1000);
     }
   }
-  Serial.println("[MDNS] Responder started - hostname emonD1.local");
+  Serial.print("[MDNS] Responder started - hostname ");
+  Serial.print(eepromData.mDNSName);
+  Serial.println(".local");
 
   // Start HTTP server
   httpServer.begin();
