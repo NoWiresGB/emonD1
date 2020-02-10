@@ -203,8 +203,10 @@ void handleConfigSave() {
 
   // check if we need to re-register
   if (reregister) {
-    MDNS.setHostname(eepromData.mDNSName);
-    MDNS.notifyAPChange();
+    // close MDNS to unannounce our services
+    MDNS.close();
+    // restart MDNS and announce with our new name
+    MDNS.begin(eepromData.mDNSName);
 
     Serial.print("[MDNS] Responder updated - hostname ");
     Serial.print(eepromData.mDNSName);
